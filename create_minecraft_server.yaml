@@ -4,8 +4,11 @@
   tasks:
     - name: Create EC2 key
       ec2_key:
+        # TODO: Pass in aws --profile from makefile or ENV VAR
+        # profile: "mc_server"
         name: "minecraft_key"
-        region: "us-west-1"
+        # Region is not required since its defined in profile in ~/.aws/config
+        # region: "us-west-1"
       register: ec2_key
 
     - name: save private key
