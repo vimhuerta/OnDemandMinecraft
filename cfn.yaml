@@ -1,0 +1,379 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  AWS CloudFormation Sample Template Rails_Single_Instance: Create a Ruby on
+  Rails stack using a single EC2 instance with a local MySQL database for
+  storage. This template demonstrates using the AWS CloudFormation bootstrap
+  scripts to install the packages and files necessary to deploy a Rails
+  application. This example creates a simple hello world application from the
+  template. **WARNING** This template creates an Amazon EC2 instance. You will
+  be billed for the AWS resources used if you create a stack from this template.
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  ImageId:
+    Description: AMI ID to use
+    Type: 'AWS::EC2::AMI'
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    ConstraintDescription: must be a valid EC2 instance type.
+  SSHLocation:
+    Description: ' The IP address range that can be used to SSH to the EC2 instances'
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+Resources:
+  MinecraftServerInstance:
+    Type: 'AWS::EC2::Instance'
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          full_install:
+            - install_cfn
+            - install_ruby_2_3_1
+            - install_mysql
+            - configure_mysql
+            - install_application
+        install_cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [main]
+                  - stack=
+                  - !Ref 'AWS::StackId'
+                  - |+
+
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Join 
+                - ''
+                - - |
+                    [cfn-auto-reloader-hook]
+                  - |
+                    triggers=post.update
+                  - |
+                    path=Resources.WebServer.Metadata.AWS::CloudFormation::Init
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - '         --stack '
+                  - !Ref 'AWS::StackName'
+                  - '         --resource WebServer '
+                  - '         --configsets full_install '
+                  - '         --region '
+                  - !Ref 'AWS::Region'
+                  - |+
+
+                  - |
+                    runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        install_ruby_2_3_1:
+          files:
+            /tmp/install_ruby:
+              content: !Join 
+                - |+
+
+                - - '#!/bin/bash'
+                  - 'curl -sSL https://get.rvm.io | bash'
+                  - source /etc/profile.d/rvm.sh
+                  - rvm install 2.3.1
+                  - rvm --default use 2.3.1
+                  - gem install rails
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_ruby:
+              command: /tmp/install_ruby > /var/log/install_ruby.log
+        install_mysql:
+          packages:
+            yum:
+              mysql: []
+              mysql-server: []
+              mysql-devel: []
+              mysql-libs: []
+          files:
+            /tmp/setup.mysql:
+              content: !Join 
+                - ''
+                - - CREATE USER '
+                  - !Ref DBUser
+                  - '''@''localhost'' IDENTIFIED BY '''
+                  - !Ref DBPassword
+                  - |
+                    ';
+                  - 'GRANT ALL ON '
+                  - !Ref DBName
+                  - .* TO '
+                  - !Ref DBUser
+                  - |
+                    '@'localhost';
+                  - |
+                    FLUSH PRIVILEGES;
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              mysqld:
+                enabled: 'true'
+                ensureRunning: 'true'
+        configure_mysql:
+          commands:
+            01_set_mysql_root_password:
+              command: !Join 
+                - ''
+                - - mysqladmin -u root password '
+                  - !Ref DBRootPassword
+                  - ''''
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            02_create_database:
+              command: !Join 
+                - ''
+                - - mysql -u root --password='
+                  - !Ref DBRootPassword
+                  - ''' < /tmp/setup.mysql'
+              test: !Join 
+                - ''
+                - - '$(mysql '
+                  - !Ref DBName
+                  - ' -u root --password='''
+                  - !Ref DBRootPassword
+                  - ''' >/dev/null 2>&1 </dev/null); (( $? != 0 ))'
+            03_cleanup:
+              command: rm /tmp/setup.mysql
+        install_application:
+          files:
+            /tmp/database.yml:
+              content: !Join 
+                - ''
+                - - |
+                    development:
+                  - |2
+                      adapter: mysql2
+                  - |2
+                      encoding: utf8
+                  - |2
+                      reconnect: false
+                  - |2
+                      pool: 5
+                  - '  database: '
+                  - !Ref DBName
+                  - |+
+
+                  - '  username: '
+                  - !Ref DBUser
+                  - |+
+
+                  - '  password: '
+                  - !Ref DBPassword
+                  - |+
+
+                  - |2
+                      socket: /var/lib/mysql/mysql.sock
+              mode: '000400'
+              owner: root
+              group: root
+            /tmp/install_application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 2.3.1
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user
+                  - |
+                    # Kill the rails server if it is running to allow update
+                  - |
+                    if pgrep ruby &> /dev/null ; then pkill -TERM ruby ; fi
+                  - |
+                    # This sample template creates a new application inline
+                  - |
+                    # Typically you would use files and/or sources to download
+                  - >
+                    # your application package and perform any configuration
+                    here.
+                  - >
+                    # Create a new application, with therubyracer javascript
+                    library
+                  - >
+                    rails new sample -d mysql --skip-spring --skip-bundle
+                    --force
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    sed -i 's/^# \(.*therubyracer.*$\)/\1/' Gemfile
+                  - |
+                    bundle install
+                  - |
+                    # Create a sample scoffold
+                  - |
+                    rails generate scaffold Note title:string body:text --force
+                  - |
+                    # Configure the database connection
+                  - |
+                    mv /tmp/database.yml config
+                  - |
+                    rake db:create db:migrate
+              mode: '000500'
+              owner: root
+              group: root
+            /home/ec2-user/start-application:
+              content: !Join 
+                - ''
+                - - |
+                    #!/bin/bash -e
+                  - |
+                    source /etc/profile.d/rvm.sh
+                  - |
+                    rvm use 2.3.1
+                  - |
+                    export HOME=/home/ec2-user
+                  - |
+                    export PATH=$PATH:/usr/local/bin
+                  - |
+                    cd /home/ec2-user/sample
+                  - |
+                    # Startup the application
+                  - |
+                    rails server --binding 0.0.0.0 -p 80 -d
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_install_application:
+              command: /tmp/install_application > /var/log/install_application.log
+            02_configure_reboot:
+              command: echo /home/ec2-user/start-application >> /etc/rc.local
+            03_start_application:
+              command: /home/ec2-user/start-application
+            04_cleanup:
+              command: rm /tmp/install_application
+      'AWS::CloudFormation::Designer':
+        id: fd5666ec-8242-4783-98cf-98a1950f90df
+    Properties:
+      ImageId: !Ref ImageId 
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref MinecraftSecurityGroup
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash -xe
+            - |
+              yum update -y aws-cfn-bootstrap
+            - '/opt/aws/bin/cfn-init -v '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource WebServer '
+            - '         --configsets full_install '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+            - '/opt/aws/bin/cfn-signal -e $? '
+            - '         --stack '
+            - !Ref 'AWS::StackId'
+            - '         --resource WebServer '
+            - '         --region '
+            - !Ref 'AWS::Region'
+            - |+
+
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT30M
+  MinecraftServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: !Ref SSHLocation
+      - IpProtocol: tcp
+        FromPort: 25565
+        ToPort: 25565
+        CidrIp: !Ref SSHLocation
+      - IpProtocol: udp
+        FromPort: 25565
+        ToPort: 25565
+        CidrIp: !Ref SSHLocation
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        FromPort: 0
+        ToPort: 0
+        CidrIp: !Ref SSHLocation
+
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 45cdb6d0-37c0-4889-b70b-bcbdbf0c3268
+Outputs:
+  WebsiteURL:
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - !GetAtt 
+          - WebServer
+          - PublicDnsName
+        - /notes
+    Description: URL for newly created Rails application
+Metadata:
+  'AWS::CloudFormation::Designer':
+    45cdb6d0-37c0-4889-b70b-bcbdbf0c3268:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 60
+        'y': 90
+      z: 1
+      embeds: []
+    fd5666ec-8242-4783-98cf-98a1950f90df:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 180
+        'y': 90
+      z: 1
+      embeds: []
+      isassociatedwith:
+        - 45cdb6d0-37c0-4889-b70b-bcbdbf0c3268
