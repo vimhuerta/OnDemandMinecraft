@@ -1,0 +1,17 @@
+---
+- hosts: localhost
+
+  tasks:
+    - name: Create EC2 key
+      ec2_key:
+        name: "minecraft_key"
+        region: "us-west-1"
+      register: ec2_key
+
+    - name: save private key
+      copy:
+        content: "{{ ec2_key.key.private_key }}" 
+        dest: "./minecraft_key.pem" 
+        mode: '0600'
+      when: ec2_key.changed
+
