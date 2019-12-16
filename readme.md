@@ -20,6 +20,9 @@ $ make minecraft
 
 There are other `Makefile` targets such as `python_venv` which creates and sources a python virtual environment and installs the packages included in `./requirements.txt`.
 # AWS Setup
+`awscli` is installed via the python virtual environment, however a profile is still required to be configured. One can simply run `aws configure --profile default` (we will be leaving the profile name as *default* for now)
+
+
 This step will properly configure your AWS account and `configuration.py` file so that an instance can be created via the `createInstance.py` script.
 
 <!-- TODO: Automate loading of AWS credentials -->
